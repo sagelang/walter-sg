@@ -1,3 +1,4 @@
 hearth/
 target/
 .env
+.venv/

@@ -94,6 +94,33 @@ pub fn env_or_default(key: String, default: String) -> String {
     std::env::var(&key).unwrap_or(default)
 }
 
+/// Return an opening brace — workaround for Sage template interpolation eating "{".
+pub fn open_brace() -> String {
+    "{".to_string()
+}
+
+/// Run a Python scraper script and return its stdout.
+pub fn run_python_scraper(script_name: String) -> String {
+    let project_dir = std::env::current_dir().unwrap_or_default();
+    let venv_python = project_dir.join(".venv/bin/python");
+    let script_path = project_dir.join(format!("scripts/{}", script_name));
+
+    match std::process::Command::new(&venv_python)
+        .arg(&script_path)
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            if stdout.trim().is_empty() {
+                format!("No data available (script: {})", script_name)
+            } else {
+                stdout.trim().to_string()
+            }
+        }
+        Err(e) => format!("Scraper error: {}", e),
+    }
+}
+
 /// Truncate a string to fit Discord's 2000-character message limit.
 /// If truncated, appends "..." to indicate continuation.
 pub fn discord_truncate(s: String, max_len: i64) -> String {

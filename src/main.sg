@@ -19,6 +19,8 @@ extern fn sleep_ms(ms: Int) -> Unit
 extern fn json_escape(s: String) -> String
 extern fn discord_truncate(s: String, max_len: Int) -> String
 extern fn extract_json_field(json: String, field: String) -> String
+extern fn open_brace() -> String
+extern fn run_python_scraper(script_name: String) -> String
 
 // --- Constants ---
 
@@ -70,18 +72,11 @@ agent HistoryAgent {
     }
 }
 
-// Scrapes Sofia water authority and extracts stop information via LLM.
+// Scrapes Sofia water authority using Python/Playwright.
 agent WaterStopsAgent {
-    use Http
-
     on start {
-        let url = "https://www.sofiyskavoda.bg/bg/customers/spir_vodosnabdqvane/";
-        let response = try Http.get(url);
-        let html = response.body;
-
-        let stops = try divine("You are an HTML extraction assistant. Below is HTML from the Sofia water authority website. Extract all water stop entries from BOTH the current stops and planned stops sections.\n\nFormat each stop as a bullet point:\n• Area — Address (Start → End) [current/planned]\n\nIf no stops are found, reply with exactly: No interruptions reported.\n\nHTML:\n{html}");
-
-        yield(stops);
+        let stops = run_python_scraper("scrape_water.py");
+        yield("" ++ stops);
     }
 
     on error(e) {
@@ -89,18 +84,11 @@ agent WaterStopsAgent {
     }
 }
 
-// Scrapes CEZ for Sofia electricity outages via LLM.
+// Scrapes ERM Zapad for Sofia electricity outages using Python.
 agent ElectricityStopsAgent {
-    use Http
-
     on start {
-        let url = "https://www.cez-rp.bg/bg/";
-        let response = try Http.get(url);
-        let html = response.body;
-
-        let stops = try divine("You are an HTML extraction assistant. Below is HTML from the CEZ electricity provider website. Extract all planned or current electricity outage entries for Sofia.\n\nFormat each outage as a bullet point:\n• Area (Start → End)\n\nIf no outages are found, reply with exactly: No outages reported.\n\nHTML:\n{html}");
-
-        yield(stops);
+        let stops = run_python_scraper("scrape_electricity.py");
+        yield("" ++ stops);
     }
 
     on error(e) {
@@ -139,7 +127,7 @@ agent DiscordAgent {
 
     on start {
         let safe_content = json_escape(discord_truncate(self.content, 1990));
-        let payload = "{" ++ "\"content\": \"" ++ safe_content ++ "\", \"username\": \"Walter\"}";
+        let payload = open_brace() ++ "\"content\": \"" ++ safe_content ++ "\", \"username\": \"Walter\"}";
 
         let response = try Http.post(self.webhook_url, payload);
 
