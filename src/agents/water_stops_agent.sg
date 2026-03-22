@@ -1,0 +1,23 @@
+// WaterStopsAgent — scrapes Sofia water authority for supply interruptions.
+
+use crate::types::{WaterStop};
+
+pub agent WaterStopsAgent {
+    use Http
+
+    on start {
+        let url = "https://www.sofiyskavoda.bg/bg/customers/spir_vodosnabdqvane/";
+        let response = try Http.get(url);
+        let html = response.body;
+
+        // Use the LLM to extract structured data from HTML.
+        // More resilient to markup changes than CSS selectors.
+        let stops: List<WaterStop> = try divine("You are an HTML extraction assistant. Below is HTML from the Sofia water authority website. Extract all water stop entries from BOTH the current stops section and the planned stops section.\n\nReturn ONLY a JSON array. Each object must have exactly these fields:\n  - \"area\": string (neighbourhood or district name)\n  - \"address\": string (street address, empty string if not present)\n  - \"start_time\": string (ISO-8601 or human-readable)\n  - \"end_time\": string (same format)\n  - \"stop_type\": string (exactly \"current\" or \"planned\")\n\nIf no stops are found, return an empty array [].\n\nHTML:\n{html}" -> List<WaterStop>);
+
+        yield(stops);
+    }
+
+    on error(e) {
+        yield([]);
+    }
+}

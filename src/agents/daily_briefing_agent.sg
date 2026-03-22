@@ -1,0 +1,82 @@
+// DailyBriefingAgent — orchestrates one daily post.
+// Fetches data in parallel, generates commentary, posts to Discord.
+
+use crate::types::{HistoricalEvent, WaterStop, ElectricityStop, HumorStyle, VictorianCommentary};
+use crate::agents::history_agent::HistoryAgent;
+use crate::agents::water_stops_agent::WaterStopsAgent;
+use crate::agents::electricity_stops_agent::ElectricityStopsAgent;
+use crate::agents::commentary_agent::CommentaryAgent;
+use crate::agents::discord_agent::DiscordAgent;
+
+pub agent DailyBriefingAgent {
+    month:       Int
+    day:         Int
+    style:       HumorStyle
+    webhook_url: String
+
+    on start {
+        // Phase 1: Fetch all data sources in parallel.
+        let history_handle = summon HistoryAgent       { month: self.month, day: self.day };
+        let water_handle   = summon WaterStopsAgent    {};
+        let elec_handle    = summon ElectricityStopsAgent {};
+
+        let events:      List<HistoricalEvent>  = try await history_handle;
+        let water_stops: List<WaterStop>        = try await water_handle;
+        let elec_stops:  List<ElectricityStop>  = try await elec_handle;
+
+        // Phase 2: Generate Victorian commentary.
+        let commentary_handle = summon CommentaryAgent {
+            events: events,
+            style:  self.style,
+            month:  self.month,
+            day:    self.day,
+        };
+        let commentary: VictorianCommentary = try await commentary_handle;
+
+        // Phase 3: Format and post to Discord (sequentially — rate limits).
+        let history_msg = format_history_message(commentary, self.month, self.day);
+        let water_msg   = format_water_message(water_stops);
+        let elec_msg    = format_elec_message(elec_stops);
+
+        let d1 = summon DiscordAgent { webhook_url: self.webhook_url, content: history_msg };
+        let _  = await d1;
+
+        let d2 = summon DiscordAgent { webhook_url: self.webhook_url, content: water_msg };
+        let _  = await d2;
+
+        let d3 = summon DiscordAgent { webhook_url: self.webhook_url, content: elec_msg };
+        let _  = await d3;
+
+        yield(true);
+    }
+
+    on error(e) {
+        yield(false);
+    }
+}
+
+// --- Formatting helpers (pure functions) ---
+
+fn format_history_message(c: VictorianCommentary, month: Int, day: Int) -> String {
+    return "@here\n" ++ "📜 **On This Day — " ++ int_to_str(month) ++ "/" ++ int_to_str(day) ++ "**\n\n" ++ c.opening ++ "\n\n" ++ c.body ++ "\n\n_" ++ c.closing ++ "_";
+}
+
+fn format_water_message(stops: List<WaterStop>) -> String {
+    if len(stops) == 0 {
+        return "💧 **Water Supply** — No interruptions reported in Sofia today.";
+    }
+    let lines = reduce(stops, "💧 **Water Supply Interruptions — Sofia**\n", |acc: String, s: WaterStop|
+        acc ++ "\n• **" ++ s.area ++ "** — " ++ s.address ++ "\n  " ++ s.start_time ++ " → " ++ s.end_time ++ " _" ++ s.stop_type ++ "_"
+    );
+    return lines;
+}
+
+fn format_elec_message(stops: List<ElectricityStop>) -> String {
+    if len(stops) == 0 {
+        return "⚡ **Electricity** — No outages reported in Sofia today.";
+    }
+    let lines = reduce(stops, "⚡ **Electricity Outages — Sofia**\n", |acc: String, s: ElectricityStop|
+        acc ++ "\n• **" ++ s.area ++ "** — " ++ s.start_time ++ " → " ++ s.end_time
+    );
+    return lines;
+}

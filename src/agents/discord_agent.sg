@@ -1,0 +1,30 @@
+// DiscordAgent — posts a single message to Discord via webhook.
+
+extern fn json_escape(s: String) -> String
+extern fn discord_truncate(s: String, max_len: Int) -> String
+
+pub agent DiscordAgent {
+    use Http
+
+    webhook_url: String
+    content:     String
+
+    on start {
+        // Truncate to Discord's 2000-char limit, then escape for JSON embedding.
+        let safe_content = json_escape(discord_truncate(self.content, 1990));
+        let payload = "{\"content\": \"" ++ safe_content ++ "\", \"username\": \"Walter\"}";
+
+        let response = try Http.post(self.webhook_url, payload);
+
+        if response.status >= 200 && response.status < 300 {
+            yield(true);
+        } else {
+            let code = int_to_str(response.status);
+            fail "Discord webhook returned status " ++ code;
+        }
+    }
+
+    on error(e) {
+        yield(false);
+    }
+}

@@ -1,0 +1,39 @@
+// CommentaryAgent — generates Victorian-humour history commentary via LLM.
+
+use crate::types::{HistoricalEvent, HumorStyle, VictorianCommentary};
+
+pub agent CommentaryAgent {
+    events: List<HistoricalEvent>
+    style:  HumorStyle
+    month:  Int
+    day:    Int
+
+    on start {
+        let style_guidance = match self.style {
+            HumorStyle::Standard    => "a balanced Victorian wit with wry modern observations. Tone: authoritative, slightly pompous, secretly delighted.",
+            HumorStyle::PooterStyle => "the style of Charles Pooter from 'Diary of a Nobody' — earnest, oblivious to his own absurdity, treating minor events with enormous gravity.",
+            HumorStyle::JeromeStyle => "the style of Jerome K. Jerome in 'Three Men in a Boat' — meandering, self-deprecating, prone to lengthy tangents that somehow circle back to the point.",
+        };
+
+        let events_text = fold(self.events, "", |acc: String, e: HistoricalEvent|
+            acc ++ "\n- " ++ int_to_str(e.year) ++ ": " ++ e.description
+        );
+
+        let m = int_to_str(self.month);
+        let d = int_to_str(self.day);
+
+        let commentary: VictorianCommentary = try divine("You are a Victorian-era gentleman-scholar writing for a Discord server. Today is {m}/{d}. Your task is to compose a morning greeting covering today's historical events. Write in {style_guidance}\n\nHistorical events:{events_text}\n\nReturn ONLY a JSON object with these exact fields:\n  - \"opening\": string (one sentence greeting, Victorian style)\n  - \"body\": string (the main historical commentary, 150-250 words)\n  - \"closing\": string (one sentence sign-off)\n  - \"humor_style\": string (which style you used)\n\nDo not include any markdown, preamble, or explanation outside the JSON." -> VictorianCommentary);
+
+        yield(commentary);
+    }
+
+    on error(e) {
+        let fallback = VictorianCommentary {
+            opening:     "Good morning. One finds oneself compelled to address the day's history.",
+            body:        "Regrettably, the consulting spirits are indisposed this morning and cannot furnish their usual commentary. One must simply proceed.",
+            closing:     "Ward watches, regardless.",
+            humor_style: "fallback",
+        };
+        yield(fallback);
+    }
+}

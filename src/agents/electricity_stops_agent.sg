@@ -1,0 +1,21 @@
+// ElectricityStopsAgent — scrapes CEZ for Sofia electricity outages.
+
+use crate::types::{ElectricityStop};
+
+pub agent ElectricityStopsAgent {
+    use Http
+
+    on start {
+        let url = "https://www.cez-rp.bg/bg/";
+        let response = try Http.get(url);
+        let html = response.body;
+
+        let stops: List<ElectricityStop> = try divine("You are an HTML extraction assistant. Below is HTML from the CEZ electricity provider website. Extract all planned or current electricity outage entries for Sofia.\n\nReturn ONLY a JSON array. Each object must have:\n  - \"area\": string\n  - \"start_time\": string\n  - \"end_time\": string\n\nIf no outages are found, return an empty array [].\n\nHTML:\n{html}" -> List<ElectricityStop>);
+
+        yield(stops);
+    }
+
+    on error(e) {
+        yield([]);
+    }
+}

@@ -1,0 +1,33 @@
+// Walter data model — shared types for all agents.
+
+pub record HistoricalEvent {
+    year: Int,
+    description: String,
+}
+
+pub record WaterStop {
+    area: String,
+    address: String,
+    start_time: String,
+    end_time: String,
+    stop_type: String,
+}
+
+pub record ElectricityStop {
+    area: String,
+    start_time: String,
+    end_time: String,
+}
+
+pub enum HumorStyle {
+    Standard,
+    PooterStyle,
+    JeromeStyle,
+}
+
+pub record VictorianCommentary {
+    opening: String,
+    body: String,
+    closing: String,
+    humor_style: String,
+}

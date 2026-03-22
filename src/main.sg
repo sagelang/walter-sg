@@ -1,0 +1,284 @@
+// Walter — A Victorian Discord Bot in Sage.
+//
+// Posts daily "On This Day in History" briefings with Victorian humour,
+// plus water and electricity outage alerts for Sofia, Bulgaria.
+//
+// Usage:
+//   sage run .                           — start the scheduler (posts daily)
+//   WALTER_TRIGGER=1 sage run .          — fire one briefing immediately and exit
+
+// --- Extern functions (implemented in sage_extern.rs) ---
+
+extern fn today_utc() -> String
+extern fn date_month(date_str: String) -> Int
+extern fn date_day(date_str: String) -> Int
+extern fn parse_int_safe(s: String) -> Int
+extern fn env_or_default(key: String, default: String) -> String
+extern fn ms_until_next(hour: Int, minute: Int) -> Int
+extern fn sleep_ms(ms: Int) -> Unit
+extern fn json_escape(s: String) -> String
+extern fn discord_truncate(s: String, max_len: Int) -> String
+extern fn extract_json_field(json: String, field: String) -> String
+
+// --- Constants ---
+
+const VERSION: String = "0.1.0";
+
+// --- Helper functions ---
+
+fn pick_style_name(index: Int) -> String {
+    let remainder = index % 3;
+    if remainder == 0 {
+        return "standard";
+    } else if remainder == 1 {
+        return "pooter";
+    }
+    return "jerome";
+}
+
+fn style_guidance(style_name: String) -> String {
+    if style_name == "pooter" {
+        return "the style of Charles Pooter from 'Diary of a Nobody' — earnest, oblivious to his own absurdity, treating minor events with enormous gravity.";
+    } else if style_name == "jerome" {
+        return "the style of Jerome K. Jerome in 'Three Men in a Boat' — meandering, self-deprecating, prone to lengthy tangents that somehow circle back to the point.";
+    }
+    return "a balanced Victorian wit with wry modern observations. Tone: authoritative, slightly pompous, secretly delighted.";
+}
+
+// --- Agents ---
+
+// Fetches Wikipedia "On This Day" events and asks the LLM to select the best 10.
+// Yields a formatted string of events ready for the commentary prompt.
+agent HistoryAgent {
+    use Http
+
+    month: Int
+    day:   Int
+
+    on start {
+        let url = "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/events/" ++ int_to_str(self.month) ++ "/" ++ int_to_str(self.day);
+        let response = try Http.get(url);
+        let events_json = response.body;
+
+        let selected = try divine("You are a historian's assistant. Below is JSON from the Wikipedia On This Day API. Select the 10 most interesting, varied, and surprising entries. Prefer events older than 50 years. Favour wars, discoveries, inventions, and colourful disasters.\n\nReturn a numbered list, one event per line, in the format:\n  YEAR: Description\n\nEvents:\n{events_json}");
+
+        yield(selected);
+    }
+
+    on error(e) {
+        yield("No historical events could be retrieved today.");
+    }
+}
+
+// Scrapes Sofia water authority and extracts stop information via LLM.
+agent WaterStopsAgent {
+    use Http
+
+    on start {
+        let url = "https://www.sofiyskavoda.bg/bg/customers/spir_vodosnabdqvane/";
+        let response = try Http.get(url);
+        let html = response.body;
+
+        let stops = try divine("You are an HTML extraction assistant. Below is HTML from the Sofia water authority website. Extract all water stop entries from BOTH the current stops and planned stops sections.\n\nFormat each stop as a bullet point:\n• Area — Address (Start → End) [current/planned]\n\nIf no stops are found, reply with exactly: No interruptions reported.\n\nHTML:\n{html}");
+
+        yield(stops);
+    }
+
+    on error(e) {
+        yield("No interruptions reported.");
+    }
+}
+
+// Scrapes CEZ for Sofia electricity outages via LLM.
+agent ElectricityStopsAgent {
+    use Http
+
+    on start {
+        let url = "https://www.cez-rp.bg/bg/";
+        let response = try Http.get(url);
+        let html = response.body;
+
+        let stops = try divine("You are an HTML extraction assistant. Below is HTML from the CEZ electricity provider website. Extract all planned or current electricity outage entries for Sofia.\n\nFormat each outage as a bullet point:\n• Area (Start → End)\n\nIf no outages are found, reply with exactly: No outages reported.\n\nHTML:\n{html}");
+
+        yield(stops);
+    }
+
+    on error(e) {
+        yield("No outages reported.");
+    }
+}
+
+// Generates Victorian-humour history commentary via LLM.
+agent CommentaryAgent {
+    events_text: String
+    style_name:  String
+    month:       Int
+    day:         Int
+
+    on start {
+        let guidance = style_guidance(self.style_name);
+        let m = int_to_str(self.month);
+        let d = int_to_str(self.day);
+
+        let commentary = try divine("You are a Victorian-era gentleman-scholar writing for a Discord server. Today is {m}/{d}. Your task is to compose a morning greeting covering today's historical events. Write in {guidance}\n\nHistorical events:\n{self.events_text}\n\nWrite:\n1. A one-sentence opening greeting in Victorian style\n2. The main historical commentary (150-250 words)\n3. A one-sentence closing sign-off\n\nDo not use markdown headers. Just write naturally.");
+
+        yield(commentary);
+    }
+
+    on error(e) {
+        yield("Good morning. One finds oneself compelled to address the day's history, yet regrettably the consulting spirits are indisposed. Ward watches, regardless.");
+    }
+}
+
+// Posts a single message to Discord via webhook.
+agent DiscordAgent {
+    use Http
+
+    webhook_url: String
+    content:     String
+
+    on start {
+        let safe_content = json_escape(discord_truncate(self.content, 1990));
+        let payload = "{" ++ "\"content\": \"" ++ safe_content ++ "\", \"username\": \"Walter\"}";
+
+        let response = try Http.post(self.webhook_url, payload);
+
+        if response.status >= 200 && response.status < 300 {
+            yield("ok");
+        } else {
+            let code = int_to_str(response.status);
+            yield("error: status " ++ code);
+        }
+    }
+
+    on error(e) {
+        yield("error: exception");
+    }
+}
+
+// Orchestrates one daily post: fetches data in parallel, generates commentary, posts to Discord.
+agent DailyBriefingAgent {
+    month:       Int
+    day:         Int
+    style_name:  String
+    webhook_url: String
+
+    on start {
+        // Phase 1: Fetch all data sources in parallel.
+        let history_handle = summon HistoryAgent       { month: self.month, day: self.day };
+        let water_handle   = summon WaterStopsAgent    {};
+        let elec_handle    = summon ElectricityStopsAgent {};
+
+        let events_text = try await history_handle;
+        let water_text  = try await water_handle;
+        let elec_text   = try await elec_handle;
+
+        // Phase 2: Generate Victorian commentary.
+        let commentary_handle = summon CommentaryAgent {
+            events_text: events_text,
+            style_name:  self.style_name,
+            month:       self.month,
+            day:         self.day,
+        };
+        let commentary = try await commentary_handle;
+
+        // Phase 3: Format and post to Discord.
+        let m = int_to_str(self.month);
+        let d = int_to_str(self.day);
+
+        let history_msg = "@here\n📜 **On This Day — " ++ m ++ "/" ++ d ++ "**\n\n" ++ commentary;
+        let water_msg   = "💧 **Water Supply — Sofia**\n" ++ water_text;
+        let elec_msg    = "⚡ **Electricity — Sofia**\n" ++ elec_text;
+
+        // Post sequentially (Discord rate limits webhooks at 30 msg/min).
+        let d1 = summon DiscordAgent { webhook_url: self.webhook_url, content: history_msg };
+        try await d1;
+
+        let d2 = summon DiscordAgent { webhook_url: self.webhook_url, content: water_msg };
+        try await d2;
+
+        let d3 = summon DiscordAgent { webhook_url: self.webhook_url, content: elec_msg };
+        try await d3;
+
+        yield("ok");
+    }
+
+    on error(e) {
+        yield("failed");
+    }
+}
+
+// --- Main bot agent ---
+
+agent WalterBot {
+    on start {
+        print("Walter v" ++ VERSION ++ " is awake. Ward is watching.");
+
+        let webhook_url = env_or_default("DISCORD_WEBHOOK_URL", "");
+        let post_hour   = parse_int_safe(env_or_default("POST_HOUR", "10"));
+        let post_minute = parse_int_safe(env_or_default("POST_MINUTE", "10"));
+        let trigger_now = env_or_default("WALTER_TRIGGER", "") != "";
+        let post_count  = 0;
+
+        if trigger_now {
+            let today = today_utc();
+            let month = date_month(today);
+            let day   = date_day(today);
+            let style_name = pick_style_name(post_count);
+
+            print("Trigger mode: posting briefing for " ++ int_to_str(month) ++ "/" ++ int_to_str(day) ++ "...");
+
+            let briefing = summon DailyBriefingAgent {
+                month:       month,
+                day:         day,
+                style_name:  style_name,
+                webhook_url: webhook_url,
+            };
+
+            let result = try await briefing;
+            print("Daily briefing result: " ++ result);
+            yield(0);
+        }
+
+        print("Scheduler mode: posting daily at " ++ int_to_str(post_hour) ++ ":" ++ int_to_str(post_minute) ++ " UTC.");
+
+        loop {
+            let wait_ms = ms_until_next(post_hour, post_minute);
+            print("Next post in " ++ int_to_str(wait_ms / 1000) ++ " seconds.");
+            sleep_ms(wait_ms);
+
+            let today = today_utc();
+            let month = date_month(today);
+            let day   = date_day(today);
+            let style_name = pick_style_name(post_count);
+
+            print("Posting briefing for " ++ int_to_str(month) ++ "/" ++ int_to_str(day) ++ "...");
+
+            let briefing = summon DailyBriefingAgent {
+                month:       month,
+                day:         day,
+                style_name:  style_name,
+                webhook_url: webhook_url,
+            };
+
+            let result = try await briefing;
+            print("Daily briefing result: " ++ result);
+
+            post_count = post_count + 1;
+        }
+    }
+
+    on error(e) {
+        print("WalterBot error. Exiting.");
+        yield(1);
+    }
+}
+
+supervisor WalterSupervisor {
+    strategy: OneForOne
+    children {
+        WalterBot { restart: Transient }
+    }
+}
+
+run WalterSupervisor;

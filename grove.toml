@@ -1,0 +1,10 @@
+[project]
+name = "walter"
+version = "0.1.0"
+entry = "src/main.sg"
+
+[extern]
+modules = ["src/sage_extern.rs"]
+
+[extern.dependencies]
+chrono = "0.4"

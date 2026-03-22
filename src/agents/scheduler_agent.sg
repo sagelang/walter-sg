@@ -1,0 +1,16 @@
+// SchedulerAgent — placeholder for future message-passing scheduler.
+// Currently unused; WalterBot handles its own scheduling loop.
+// When Sage's send/receive message passing is fully wired up,
+// this agent will sleep until POST_HOUR:POST_MINUTE and send
+// a TriggerDailyBriefing message to WalterBot.
+
+pub agent SchedulerAgent {
+    on start {
+        print("SchedulerAgent: placeholder — not yet active.");
+        yield(0);
+    }
+
+    on error(e) {
+        yield(1);
+    }
+}

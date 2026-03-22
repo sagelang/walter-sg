@@ -1,0 +1,27 @@
+// HistoryAgent — fetches Wikipedia "On This Day" events and selects the best 10.
+
+use crate::types::{HistoricalEvent};
+
+pub agent HistoryAgent {
+    use Http
+
+    month: Int
+    day:   Int
+
+    on start {
+        let url = "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/events/" ++ int_to_str(self.month) ++ "/" ++ int_to_str(self.day);
+
+        let response = try Http.get(url);
+        let events_json = response.body;
+
+        // Wikipedia returns { "events": [...] } with "year" and "text" fields.
+        // We ask the LLM to select and rank the 10 most interesting.
+        let events: List<HistoricalEvent> = try divine("You are a historian's assistant. Below is JSON from the Wikipedia On This Day API. Select the 10 most interesting, varied, and surprising entries. Prefer events older than 50 years. Favour wars, discoveries, inventions, and colourful disasters.\n\nReturn ONLY a JSON array where each object has:\n  - \"year\": integer\n  - \"description\": string (the event text, verbatim from the source)\n\nEvents:\n{events_json}" -> List<HistoricalEvent>);
+
+        yield(events);
+    }
+
+    on error(e) {
+        yield([]);
+    }
+}
